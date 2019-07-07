@@ -1,0 +1,2 @@
+class pickysettingsError(Exception):
+    pass
