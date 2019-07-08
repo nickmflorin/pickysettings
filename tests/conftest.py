@@ -1,13 +1,95 @@
 import os
+import importlib
 import pathlib
 import pytest
 import textwrap
 
-from pickysettings import LazySettings
-from pickysettings.core.setting import Setting
+
+TMP_MODULE = 'tests/tmp_modules'
 
 
-TMP_MODULE_DIR = 'tests/tmp_modules'
+def get_tests_path():
+    return pathlib.PosixPath(TMP_MODULE)
+
+
+def get_tests_absolute_path():
+
+    tests_dir = get_tests_path()
+    if not tests_dir.exists():
+        raise RuntimeError('There must be a temporary module directory at %s.'
+            % tests_dir.as_posix())
+    return tests_dir.absolute()
+
+
+def get_path_for_tests(path, directory=False):
+    """
+    For a given path, returns the path inside of the tests module
+    directory.
+
+    >>> get_path_for_tests('app/settings/dev.py')
+    >>> 'tests/tmp_modules/app/settings/dev.py'
+    """
+    if not isinstance(path, pathlib.Path):
+        path = pathlib.PosixPath(path)
+
+    tests_path = get_tests_path()
+
+    if len(path.parts) == 2:
+        if path.parts[0] == tests_path.parts[0] and path.parts[1] == tests_path.parts[1]:
+            raise RuntimeError('Path %s is already in tests directory.' % path)
+
+    path = tests_path.joinpath(path)
+    if directory and path.suffix:
+        return path.parent
+    return path
+
+
+def get_absolute_path_for_tests(path, directory=False):
+    if path.is_absolute():
+        if not directory and path.suffix:
+            return path.parent
+        return path
+    path = get_path_for_tests(path, directory=directory)
+    return path.absolute()
+
+
+def get_module_path_for_tests(path, directory=False):
+    """
+    For a given path, returns the module path inside of the tests module
+    directory.
+
+    >>> get_module_path_for_tests('app/settings/dev.py')
+    >>> 'tests.tmp_modules.app.settings.dev'
+    """
+    if not isinstance(path, pathlib.Path):
+        path = pathlib.PosixPath(path)
+
+    path = get_absolute_path_for_tests(path)
+    tests_path = get_tests_absolute_path()
+
+    path = path.relative_to(tests_path)
+
+    if directory and path.suffix:
+        path = path.parent
+    else:
+        path = path.with_suffix('')
+    return '.'.join(path.parts)
+
+
+# @pytest.fixture
+# def get_test_relative_abs_path(get_tests_path, tests_absolute_path):
+
+#     def _get_test_relative_path(path):
+#         if not isinstance(path, pathlib.Path):
+#             path = pathlib.PosixPath(path)
+
+#         if path.is_absolute():
+#             return path.relative_to(tests_absolute_path)
+#         else:
+#             path = get_tests_path(path)
+#             return path.absolute()
+
+#     return _get_test_relative_path
 
 
 @pytest.fixture
@@ -61,67 +143,83 @@ def create_temp_file(tmpdir):
     return create_file
 
 
-@pytest.fixture
-def reload_tmp_modules():
-    """
-    When we update or add modules to the tmp_modules directory, we have to
-    reload the tmp_modules module, otherwise the updates will not be reflected
-    in LazySettings and new settings files added will raise import errors.
+# @pytest.fixture(scope='function')
+# def reload_tmp_modules(TMP_MODULE_DIR):
+#     """
+#     When we update or add modules to the tmp_modules directory, we have to
+#     reload the tmp_modules module, otherwise the updates will not be reflected
+#     in LazySettings and new settings files added will raise import errors.
 
-    [x] TODO:
-    ---------
-    This does not work for updating the contents of an imported module file
-    in the same test.  If we use multiple module files in the same test, we
-    need to create two separate files instead of updating the content of the first
-    file.
+#     [x] TODO:
+#     ---------
+#     This does not work for updating the contents of an imported module file
+#     in the same test.  If we use multiple module files in the same test, we
+#     need to create two separate files instead of updating the content of the first
+#     file.
 
-    [x] NOTE:
-    ---------
-    Ideally, we would want to test invalid imports in modules, but that raises
-    errors in this fixture - there has to be a more clever way of doing this.
+#     [x] NOTE:
+#     ---------
+#     Ideally, we would want to test invalid imports in modules, but that raises
+#     errors in this fixture - there has to be a more clever way of doing this.
 
-    If we do the following:
+#     If we do the following:
 
-    >>> try:
-    >>>     importlib.import_module(module_path)
-    >>> except ModuleNotFoundError:
-    >>>     pass
+#     >>> try:
+#     >>>     importlib.import_module(module_path)
+#     >>> except ModuleNotFoundError:
+#     >>>     pass
 
-    we run the risk of suppressing unintentional issues in the modules we are
-    creating.
-    """
-    def _reload_tmp_modules(*parts, invalid=False):
-        """
-        Parts are specified relative to tests/tmp_modules.
+#     we run the risk of suppressing unintentional issues in the modules we are
+#     creating.
+#     """
+#     modules = []
 
-        The `invalid` keyword argument indicates that we are expecting the
-        given module file to cause an error during import and want this error
-        to be raised in the actual code, not during the reloading of the
-        module in tests.
+#     def _reload_tmp_modules(*parts, invalid=False):
+#         """
+#         Parts are specified relative to tests/tmp_modules.
 
-        [!] IMPORTANT:
-        --------------
-        If the `invalid` keyword argument is specified, and the module path
-        indicated by `parts` does not point to that specific file, but rather
-        a containing module, we run the risk of not reloading other parts of
-        the containing module.
-        """
-        import importlib
+#         The `invalid` keyword argument indicates that we are expecting the
+#         given module file to cause an error during import and want this error
+#         to be raised in the actual code, not during the reloading of the
+#         module in tests.
 
-        module_parts = TMP_MODULE_DIR.split('/') + list(parts)
-        module_path = '.'.join(module_parts)
+#         [!] IMPORTANT:
+#         --------------
+#         If the `invalid` keyword argument is specified, and the module path
+#         indicated by `parts` does not point to that specific file, but rather
+#         a containing module, we run the risk of not reloading other parts of
+#         the containing module.
+#         """
+#         import importlib
 
-        try:
-            module = importlib.import_module(module_path)
-        except ImportError as e:
-            if invalid:
-                print('Intentionally Ignoring Invalid Module')
-                return
-            raise e
-        else:
-            importlib.reload(module)
+#         module_parts = TMP_MODULE_DIR.split('/') + list(parts)
+#         module_path = '.'.join(module_parts)
 
-    return _reload_tmp_modules
+#         try:
+#             module = importlib.import_module(module_path)
+#         except ImportError as e:
+#             if invalid:
+#                 print('Intentionally Ignoring Invalid Module')
+#                 return
+#             raise e
+#         else:
+#             if module not in modules:
+#                 modules.append(module)
+#             else:
+#                 importlib.reload(module)
+
+#             # print('Reloading Module %s' % module_path)
+#             # try:
+#             #     importlib.reload(module)
+#             # except Exception as e:
+#             #     import ipdb; ipdb.set_trace()
+
+#             #     if invalid:
+#             #         print('Warning: Should not be here.')
+#             #         return
+#             #     raise e
+
+#     return _reload_tmp_modules
 
 
 @pytest.fixture
@@ -145,7 +243,7 @@ def write_file_content():
 
 
 @pytest.fixture
-def temp_module(reload_tmp_modules, write_file_content):
+def temp_module(write_file_content):
     """
     Fixture that returns a context manager that allows us to temporarily create
     and remove a settings file in a module in the `tests/tmp` directory.
@@ -185,10 +283,13 @@ def temp_module(reload_tmp_modules, write_file_content):
         >>> temp_module('app/settings/dev2.py', content={'VALUE': 2})
     """
 
-    tests_dir = pathlib.PosixPath(TMP_MODULE_DIR).absolute()
-    if not tests_dir.exists():
-        raise RuntimeError('There must be a temporary module directory at %s.'
-            % tests_dir.as_posix())
+    def _reload_module_file(path, invalid=False):
+
+        module_path = get_module_path_for_tests(path)
+        print('Reloading %s' % module_path)
+
+        module = importlib.import_module(module_path)
+        importlib.reload(module)
 
     def _instantiate_module(path):
         """
@@ -215,11 +316,18 @@ def temp_module(reload_tmp_modules, write_file_content):
         a dict, a series of key-value Python variables are created.  The content
         is then written to the file.
         """
-        if not path.exists():
-            path.touch()
+        PATH_EXISTS = False
 
+        if path.exists():
+            PATH_EXISTS = True
+            path.unlink()
+
+        path.touch()
         if content:
             write_file_content(path, content)
+
+        if PATH_EXISTS:
+            _reload_module_file(path)
 
     def _create_temp_module(path, content=None, invalid=False):
         """
@@ -237,92 +345,54 @@ def temp_module(reload_tmp_modules, write_file_content):
         if path.is_absolute():
             raise RuntimeError('Path to settings module cannot be absolute.')
 
-        parts = path.parts
-
         if path.suffix:
             if path.suffix != '.py':
                 raise RuntimeError('Path must point to valid Python file.')
-            parts = path.parts[:-1]
 
-        module_dir = tests_dir
-        for pt in parts:
-            module_dir = module_dir.joinpath(pt)
-            _instantiate_module(module_dir)
+        module_path = get_absolute_path_for_tests(path, directory=True)
+        _instantiate_module(module_path)
 
         if path.suffix:
-            module_dir = module_dir.joinpath(path.name)
-            _instantiate_module_file(module_dir, content=content)
+            module_path = get_absolute_path_for_tests(path)
+            print('Creating Module File %s' % module_path)
+            _instantiate_module_file(module_path, content=content)
 
-        module_path = module_dir.relative_to(tests_dir)
-        module_path = module_path.with_suffix('')
-
-        # Have to Reload `tests/tmp_modules` Module
-        # We might be able to just reload the top level module instead of the
-        # module at the file level...
-        reload_tmp_modules(*module_path.parts, invalid=invalid)
-        return module_dir
+        return module_path
 
     return _create_temp_module
 
 
-def remove_module(path):
-    """
-    Given a path to a directory in tests/tmp, removes the module, it's contents
-    and all of it's children.
-
-    -- tests
-    ---- tmp
-    -------- settings
-    ------------__init__.py.py
-    ------------dev.py
-
-    >>> remove_module('tests/tmp/settings')
-
-    -- tests
-    ---- tmp
-
-    [!] IMPORTANT
-    -------------
-    Current Working Directory Cannot be Mocked
-    """
-    if not isinstance(path, pathlib.Path):
-        path = pathlib.PosixPath(path)
-
-    if path.suffix:
-        raise RuntimeError('Path to settings module must not point to a file.')
-
-    for child in path.iterdir():
-        if child.is_dir():
-            remove_module(child)
-        else:
-            child.unlink()
-    path.rmdir()
-
-
+@pytest.fixture
 def remove_temp_module():
     """
     Removes the tests/tmp directory used to store the settings modules.
 
-    -- tests
-    ---- tmp
-    -------- settings
-    ------------__init__.py.py
-    ------------dev.py
-
-    >>> remove_settings_module()
-
-    -- tests
-
     [!] IMPORTANT
     -------------
     Current Working Directory Cannot be Mocked
     """
-    tmp_path = pathlib.PosixPath(TMP_MODULE_DIR)
-    tmp_path = tmp_path.absolute()
-    remove_module(tmp_path)
+    def _remove_module(path):
+        if not isinstance(path, pathlib.Path):
+            path = pathlib.PosixPath(path)
+
+        if path.suffix:
+            raise RuntimeError('Path to settings module must not point to a file.')
+
+        for child in path.iterdir():
+            if child.is_dir():
+                _remove_module(child)
+            else:
+                child.unlink()
+
+    def _remove_temp_module():
+        tmp_path = pathlib.PosixPath(TMP_MODULE)
+        tmp_path = tmp_path.absolute()
+        _remove_module(tmp_path)
+
+    return _remove_temp_module
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def test_settings():
     """
     Creates an instance of LazySettings with the base directory adjusted for
@@ -330,12 +400,14 @@ def test_settings():
     """
     def _test_settings(*args, base_dir=None, **kwargs):
 
+        from pickysettings import LazySettings
+
         settings = list(args) or []
         if settings:
             if hasattr(args[0], '__name__'):
                 settings = list(args)[1:]
 
-        base = pathlib.PosixPath(TMP_MODULE_DIR)
+        base = pathlib.PosixPath(TMP_MODULE)
         if base_dir:
             base = base.joinpath(base_dir)
 
@@ -343,37 +415,3 @@ def test_settings():
         return obj
 
     return _test_settings
-
-
-@pytest.fixture
-def test_setting():
-    """
-    Creates an instance of Setting with the base directory adjusted for
-    the temporary settings module.
-    """
-    def _test_settings(*args, base_path=None):
-
-        value = args[0]
-        if hasattr(args[0], '__name__'):
-            value = list(args)[1]
-
-        base = pathlib.PosixPath(TMP_MODULE_DIR)
-        base_path = base.joinpath(base_path)
-        return Setting(value, base_path=base_path)
-
-    return _test_settings
-
-
-@pytest.fixture(scope='function')
-def settings_tmp_client(request, tmpdir, mock_cwd, create_temp_dir, create_temp_file):
-
-    mock_cwd()
-    request.cls.tmpdir = tmpdir
-    request.cls.create_temp_dir = create_temp_dir
-    request.cls.create_temp_file = create_temp_file
-
-
-@pytest.fixture(scope='function')
-def settings_module_client(request, settings_module, test_settings):
-    request.cls.settings_module = settings_module
-    request.cls.test_settings = test_settings

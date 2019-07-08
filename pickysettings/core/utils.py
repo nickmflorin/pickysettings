@@ -62,3 +62,18 @@ class Storable(object):
 
     def __contains__(self, key):
         return self._store.__contains__(key)
+
+
+class FieldStorable(Storable):
+
+    @property
+    def fields(self):
+        return self._store
+
+    def as_dict(self):
+        data = self._store.copy()
+
+        converted = {}
+        for k, v in data.items():
+            converted[k] = v.value
+        return converted

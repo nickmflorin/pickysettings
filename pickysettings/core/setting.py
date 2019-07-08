@@ -10,10 +10,10 @@ from pickysettings.core.fields import ConstantField
 from pickysettings.core.fields.base import FieldABC
 
 from .exceptions import setting as exceptions, FieldInitializationError
-from .utils import Storable
+from .utils import FieldStorable
 
 
-class Setting(Storable):
+class Setting(FieldStorable):
     """
     Represents a single reference to a settings file, whether provided directly
     to LazySettings, provided as an ENV variable or as a command line argument.

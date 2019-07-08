@@ -10,14 +10,14 @@ import warnings
 from termx.library import ensure_iterable
 
 from .setting import Setting
-from .utils import Storable
+from .utils import FieldStorable
 from .exceptions import (
     SettingsLoadError, SettingFileLoadError, SettingsNotConfigured,
     InvalidSettingsDir, MissingSettingsDir, MissingEnvironmentKeys,
     configuration as config_exceptions)
 
 
-class LazySettings(Storable):
+class LazySettings(FieldStorable):
     """
     Adopted from simple_settings module
     < https://github.com/drgarcia1986/simple-settings >
@@ -44,7 +44,7 @@ class LazySettings(Storable):
     """
 
     def __init__(self, *settings, base_dir=None, env_keys=None,
-            command_line_args='--settings', debug=False, strict_load=True):
+            command_line_args='--pickysettings', debug=False, strict_load=True):
         """
         Initializes the settings with the optionally passed in settings list.
         Requires either settings passed in via the `settings` argument, settings
@@ -56,20 +56,17 @@ class LazySettings(Storable):
         with overrides.
         """
         self._settings = list(settings)
-        self.settings = []
-
         self._debug = debug
         self._strict_load = strict_load
-
         self._base_dir = base_dir
-        self._base_path = None
 
+        self._base_path = None
         self._initialized = False
+        self.settings = []
 
         self._env_keys = ()
         if env_keys:
             self._env_keys = ensure_iterable(env_keys, coercion=tuple, force_coerce=True)
-
         self._command_line_args = ensure_iterable(command_line_args, coercion=tuple, force_coerce=True)
 
         super(LazySettings, self).__init__()
@@ -206,7 +203,7 @@ class LazySettings(Storable):
 
     def as_dict(self):
         self._setup()
-        return dict(self)
+        return super(LazySettings, self).as_dict()
 
     def _add_setting(self, value):
         """

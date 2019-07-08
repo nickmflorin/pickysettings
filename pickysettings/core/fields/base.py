@@ -47,6 +47,19 @@ class BaseField(object):
     def __init__(self, *args, **kwargs):
         self._set_defaults(**kwargs)
 
+    def __eq__(self, other):
+        return self.__dict__ == other.__dict__
+
+    @property
+    def __dict__(self):
+        return {
+            'help': self.help,
+            'name': self.name,
+            'value': self.value,
+            'configurable': self.configurable,
+            'optional': self.optional
+        }
+
     def _set_defaults(self, **kwargs):
         options = self._meta('options')
 
