@@ -1,48 +1,199 @@
+import os
 import pytest
 
 from pickysettings import LazySettings
+from pickysettings.core.exceptions import (
+    initialization as init_exceptions, setting as setting_exceptions)
 
-from pickysettings.core.exceptions import initialization as init_exceptions
+from .base import TestSettingsBase
 
 
-def test_settings_not_configured():
+"""
+[x] NOTE:
+--------
+
+When creating settings that we are actually going to load with importlib,
+we have to create them within the pickysettings module, so we set aside a folder
+in tests/settings for this.
+
+This is all handled by the temp_module fixture.
+"""
+
+
+class TestSettings(TestSettingsBase):
     """
-    If LazySettings is initialized without any specified settings, or
-    any valid ENV variables or command line arguments, SettingsNotConfigured
-    should be raised to indicate that there are no settings specified.
-    """
-    settings = LazySettings(base_dir='Users/John/settings.py')
-    with pytest.raises(init_exceptions.SettingsNotConfigured):
-        settings.SOME_VALUE
+    Abstract Test Class for Organization Purposes
+    Purpose: Testing the initialization of LazySettings with files specified
+        via the different methods:
+            (1) Command Line Args
+            (2) ENV Variables
+            (3) Initialization Params
 
-
-def test_nonexisting_base_path():
-    """
     When trying to access a value on the settings object for the first time, the
-    settings will be loaded.
-
-    If the absolute path of the base directory (in this case, the temp directory
-    joined with '/Users/John/settings') does not exist, an exception should be
-    raised.
+    settings will be loaded for the first time (not on initialization) at which
+    point any potential errors will be raised.
     """
-    settings = LazySettings('dev', 'base.py', base_dir='Users/John/settings')
-    with pytest.raises(init_exceptions.MissingSettingsDir):
-        settings.SETTINGS_VALUE
+    base_path = 'app/settings'
+    module_path = 'app/settings/dev.py'  # Path where File is Created with Content
 
+    def test_case_insensitive(self, temp_module, test_settings):
 
-def test_file_base_path(create_temp_dir, create_temp_file):
-    """
-    When trying to access a value on the settings object for the first time, the
-    settings will be loaded.
+        temp_module(self.module_path, content={
+            'TEST_VARIABLE_1': 1,
+            'TEST_VARIABLE_2': 5,
+        })
 
-    If the absolute path of the base directory (in this case, the temp directory
-    joined with '/Users/John/settings') indicates a file, an exception should be
-    raised.
-    """
-    create_temp_dir('Users/John')
-    create_temp_file('settings.py', directory='Users/John')
+        settings = LazySettings('dev', base_dir=self.base_path)
 
-    settings = LazySettings('dev.py', base_dir='Users/John/settings.py')
+        assert settings.test_variable_1 == 1
+        assert settings.test_variable_2 == 5
 
-    with pytest.raises(init_exceptions.InvalidSettingsDir):
-        settings.SETTINGS_VALUE
+    def test_functions_ignored(self, temp_module, test_settings):
+
+        content = """
+        def sample_function():
+            return 1
+
+        TEST_VARIABLE_1 = 5
+        TEST_VARIABLE_2 = 10
+        """
+
+        temp_module(self.module_path, content=content)
+        settings = LazySettings('dev', base_dir=self.base_path)
+
+        assert settings.as_dict() == {
+            'TEST_VARIABLE_1': 5,
+            'TEST_VARIABLE_2': 10,
+        }
+
+    def test_imports_ignored(self, temp_module, test_settings):
+
+        content = """
+        import pathlib
+
+        TEST_VARIABLE_1 = 5
+        TEST_VARIABLE_2 = 10
+        """
+
+        temp_module(self.module_path, content=content)
+        settings = LazySettings('dev', base_dir=self.base_path)
+
+        assert settings.as_dict() == {
+            'TEST_VARIABLE_1': 5,
+            'TEST_VARIABLE_2': 10,
+        }
+
+    def test_env_settings_do_not_override(self, temp_module):
+        """
+        ENV settings should be overridden by any settings specified via
+        initialization of the LazySettings object.
+        """
+        temp_module('app/settings/dev.py', content={
+            'TEST_VARIABLE_1': 1,
+            'TEST_VARIABLE_2': 15,
+        })
+
+        temp_module('app/settings/dev2.py', content={
+            'TEST_VARIABLE_1': 5,
+            'TEST_VARIABLE_3': 10,
+        })
+
+        os.environ['TEST_FILE1'] = 'dev2'
+
+        settings = LazySettings('dev', base_dir=self.base_path, env_keys=['TEST_FILE1'])
+
+        assert settings.TEST_VARIABLE_1 == 1
+        assert settings.TEST_VARIABLE_2 == 15
+        assert settings.TEST_VARIABLE_3 == 10
+
+    def test_invalid_import_raises(self, temp_module):
+
+        invalid_content = """
+        import missing_package
+
+        TEST_VARIABLE_1 = 5
+        TEST_VARIABLE_3 = 10
+        """
+
+        temp_module('app/settings/dev.py', content=invalid_content, invalid=True)
+
+        settings = LazySettings('dev', base_dir=self.base_path)
+        with pytest.raises(init_exceptions.SettingsLoadError) as e:
+            settings.TEST_VARIABLE_1
+
+        assert (
+            [err._exc.__class__ for err in e.value._errors] == [ModuleNotFoundError])
+
+    def test_settings_not_configured(self):
+        """
+        If LazySettings is initialized without any specified settings, or
+        any valid ENV variables or command line arguments, SettingsNotConfigured
+        should be raised to indicate that there are no settings specified.
+        """
+        settings = LazySettings(base_dir='app/settings.py')
+        with pytest.raises(init_exceptions.SettingsNotConfigured):
+            settings.SOME_VALUE
+
+    def test_nonexisting_path(self):
+        """
+        When trying to access a value on the settings object for the first time, the
+        settings will be loaded.
+
+        If the absolute path of the base directory (in this case, the temp directory
+        joined with '/Users/John/settings') does not exist, an exception should be
+        raised.
+        """
+        settings = LazySettings('dev', 'base.py', base_dir='app/settings')
+        with pytest.raises(init_exceptions.MissingSettingsDir):
+            settings.SETTINGS_VALUE
+
+    def test_nonexisting_file(self, temp_module):
+        """
+        If the base path provided to LazySettings exists, but the file corresponding
+        to the Setting object does not exist, SettingFileDoesNotExist should
+        be raised.
+
+        Note that this exception actually gets triggered in the Setting object.
+
+        [x] TODO:
+        --------
+        Should we test under various situations of strict load?  Should we allow
+        strict load to ignore missing files as long as one valid file exists?
+        """
+        temp_module('app/settings')
+
+        settings = LazySettings('dev', base_dir=self.base_path)
+        with pytest.raises(setting_exceptions.SettingFileDoesNotExist):
+            settings.SETTINGS_VALUE
+
+        # Test With Non Existing Environment Variable but Valid Init Setting
+        temp_module('app/settings/dev.py')
+        os.environ['SETTINGS_FILE'] = 'dev2'
+
+        settings = LazySettings('dev', env_keys='SETTINGS_FILE', base_dir=self.base_path)
+        with pytest.raises(setting_exceptions.SettingFileDoesNotExist):
+            settings.SETTINGS_VALUE
+
+    def test_file_base_path(self, temp_module):
+        """
+        If the absolute path of the base directory (in this case, the temp directory
+        joined with 'users/john/settings') indicates a file, an exception should be
+        raised.
+        """
+        temp_module('users/john/settings.py')
+        settings = LazySettings('dev.py', base_dir=self._base_path('users/john/settings.py'))
+
+        with pytest.raises(init_exceptions.InvalidSettingsDir):
+            settings.SETTINGS_VALUE
+
+    def test_env_variables_missing(self, temp_module):
+        """
+        If LazySettings is initialized with ENV keys and there is no value
+        in os.environ associated with those ENV keys, then the
+        MissingEnvironmentKeys exception should be raised.
+        """
+        temp_module('app/settings/dev.py')
+        settings = LazySettings(env_keys=['dev'], base_dir=self._base_path('app/settings/dev.py'))
+
+        with pytest.raises(init_exceptions.MissingEnvironmentKeys):
+            settings.TEST_VARIABLE_1

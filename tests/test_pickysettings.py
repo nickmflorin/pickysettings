@@ -14,7 +14,7 @@ def test_module_reload(temp_module, test_settings):
 
     temp_module('app/settings/dev.py', content=content)
     settings = test_settings('dev', base_dir='app/settings')
-    print(settings.TEST_VARIABLE_1)
+    assert settings.TEST_VARIABLE_1 == 5
 
     content2 = """
     TEST_VARIABLE_1 = 50
@@ -23,4 +23,4 @@ def test_module_reload(temp_module, test_settings):
 
     temp_module('app/settings/dev.py', content=content2)
     settings = test_settings('dev', base_dir='app/settings')
-    print(settings.TEST_VARIABLE_1)
+    assert settings.TEST_VARIABLE_1 == 50

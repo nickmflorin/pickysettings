@@ -71,27 +71,6 @@ class LazySettings(FieldStorable):
 
         super(LazySettings, self).__init__()
 
-    @property
-    def base_path(self):
-        """
-        [x] NOTE:
-        --------
-        We want to use pathlib.PosixPath instances so that we can check if the
-        directory exists, is a file, etc.
-        """
-        if not self._base_path:
-            if self._base_dir:
-                self._base_path = pathlib.PosixPath(self._base_dir)
-
-                absolute_base_path = self._base_path.absolute()
-                if absolute_base_path.is_file():
-                    raise InvalidSettingsDir(absolute_base_path)
-
-                if not absolute_base_path.exists():
-                    raise MissingSettingsDir(absolute_base_path)
-
-        return self._base_path
-
     def __getitem__(self, key):
         """
         For value acceses by attribute or key, we want to return the value of
@@ -215,7 +194,7 @@ class LazySettings(FieldStorable):
         instead of in the _load() method.
         """
         if value not in [setting.value for setting in self.settings]:
-            setting_obj = Setting(value, base_path=self.base_path)
+            setting_obj = Setting(value, base_dir=self._base_dir)
             self.settings.append(setting_obj)
 
     def _add_settings(self, settings):

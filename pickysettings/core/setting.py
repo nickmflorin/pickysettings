@@ -9,6 +9,11 @@ from pickysettings.lib.utils import paths_overlap
 from pickysettings.core.fields import ConstantField
 from pickysettings.core.fields.base import FieldABC
 
+from .exceptions import (
+    SettingsLoadError, SettingFileLoadError, SettingsNotConfigured,
+    InvalidSettingsDir, MissingSettingsDir, MissingEnvironmentKeys,
+    configuration as config_exceptions)
+
 from .exceptions import setting as exceptions, FieldInitializationError
 from .utils import FieldStorable
 
@@ -42,16 +47,60 @@ class Setting(FieldStorable):
 
     DEFAULT_FILE_EXT = 'py'
 
-    def __init__(self, value, base_path=None):
+    def __init__(self, value, base_dir=None):
 
-        self._base_path = base_path
+        self._base_dir = base_dir
         self._value = value
+
+        self._base_path = None
+        self._absolute_base_path = None
 
         # Variable that indicates whether or not the values from the loaded file
         # associated with this Setting instance have been stored in the LazySettings
         # object/container.
         self._stored = False
         super(Setting, self).__init__()
+
+    @property
+    def base_path(self):
+        """
+        [x] NOTE:
+        --------
+        We want to use pathlib.PosixPath instances so that we can check if the
+        directory exists, is a file, etc.
+        """
+        if not self._base_path:
+            if self._base_dir:
+                self._base_path = pathlib.PosixPath(self._base_dir)
+
+                absolute_base_path = self._base_path.absolute()
+                if absolute_base_path.is_file():
+                    raise InvalidSettingsDir(absolute_base_path)
+
+                if not absolute_base_path.exists():
+                    raise MissingSettingsDir(absolute_base_path)
+
+        return self._base_path
+
+    @property
+    def absolute_base_path(self):
+        """
+        [x] NOTE:
+        --------
+        We raise exceptions here relevant to the LazySettings object, since this
+        value is calculated based on configuration values on LazySettings.
+        """
+        if not self._absolute_base_path:
+            if self.base_path:
+
+                self._absolute_base_path = self.base_path.absolute()
+                if self._absolute_base_path.is_file():
+                    raise InvalidSettingsDir(self._absolute_base_path)
+
+                if not self._absolute_base_path.exists():
+                    raise MissingSettingsDir(self._absolute_base_path)
+
+        return self._absolute_base_path
 
     @property
     def value(self):
@@ -115,10 +164,6 @@ class Setting(FieldStorable):
         if not absolute_path.is_file():
             raise exceptions.SettingIsNotFilePath(absolute_path)
 
-    def _join_with_suffix(self, *parts):
-        joined = "/".join(list(parts))
-        return pathlib.PosixPath(joined).with_suffix('.%s' % self.DEFAULT_FILE_EXT)
-
     def get_module_path(self):
 
         # Get Path of Specification File Relative to Working Directory
@@ -139,25 +184,35 @@ class Setting(FieldStorable):
             return '.'.join(module_file_path.parts)
 
     def get_absolute_path(self, path=None):
-
+        """
+        When getting the absolute path, we need both the absolute base path
+        and the base path.  This is because the path can be specified relative
+        to both the FULL absolute base path, and the base path provided as
+        to the LazySettings obj.
+        """
         file_path = path or self.get_path()
         if file_path.is_absolute():
             self.raise_for_absolute_path(file_path)
             return file_path
 
-        if self._base_path:
+        if self.absolute_base_path:
             try:
-                file_path = file_path.relative_to(self._base_path)
+                file_path = file_path.relative_to(self.absolute_base_path)
             except ValueError:
-                if not paths_overlap(self._base_path, file_path):
-                    file_path = self._base_path.joinpath(file_path)
+                try:
+                    file_path = file_path.relative_to(self.base_path)
+                except ValueError:
+                    if not paths_overlap(self.base_path, file_path):
+                        file_path = self.base_path.joinpath(file_path)
+                    else:
+                        raise exceptions.InvalidSetting(
+                            "The path %s is not relative to the base %s."
+                            % (file_path.as_posix(), self.base_path.as_posix())
+                        )
                 else:
-                    raise exceptions.InvalidSetting(
-                        "The path %s is not relative to the base %s."
-                        % (file_path.as_posix(), self._base_path.as_posix())
-                    )
+                    file_path = self.base_path.joinpath(file_path)
             else:
-                file_path = self._base_path.joinpath(file_path)
+                file_path = self.absolute_base_path.joinpath(file_path)
 
         file_path = file_path.absolute()
         self.raise_for_absolute_path(file_path)
@@ -184,6 +239,11 @@ class Setting(FieldStorable):
         Make sure that checks for '/' in the value are appropriate across
         operating systems.
         """
+
+        def join_with_suffix(*parts):
+            joined = "/".join(list(parts))
+            return pathlib.PosixPath(joined).with_suffix('.%s' % self.DEFAULT_FILE_EXT)
+
         value = "%s" % self._value
 
         if '.' in value:
@@ -203,7 +263,8 @@ class Setting(FieldStorable):
                     elif parts[1] == '':
                         raise exceptions.InvalidSetting(value)  # e.g. "filename."
                     else:
-                        path = self._join_with_suffix(*parts)
+                        path = join_with_suffix(*parts)
+
                         try:
                             self.get_absolute_path(path=path)
                         except exceptions.InvalidSetting:
@@ -215,7 +276,7 @@ class Setting(FieldStorable):
                     # Guaranteed to be Module Path at This Point
                     # (i.e. module.submodule.filename)
                     #  (Assumes suffix is not included in module path)
-                    return self._join_with_suffix(*parts)
+                    return join_with_suffix(*parts)
 
         else:
             # Either just a filename without extension or a path without a file.
