@@ -1,19 +1,10 @@
 from termx.ext.utils import ConditionalString
 
-from .base import pickysettingsError
+from .base import ConfigureError
 from .fields import FieldError, FieldErrorMeta, FieldCodes
 
 
-class SettingConfigurationError(pickysettingsError):
-    """
-    General base class that is used if parameters that are used to initialize
-    the LazySettings object result in an invalid configuration, such as a
-    `base_dir` that does not exist.
-    """
-    pass
-
-
-class FieldConfigurationError(SettingConfigurationError, FieldError, metaclass=FieldErrorMeta):
+class FieldConfigurationError(ConfigureError, FieldError, metaclass=FieldErrorMeta):
 
     class Codes(FieldCodes):
 

@@ -1,16 +1,15 @@
 import os
 import pytest
+import sys
 
-from tests.mgmt import need_to_do
+from tests.helpers import need_to_do
 
 from pickysettings import LazySettings
-from pickysettings.core.exceptions import (
-    initialization as init_exceptions, setting as setting_exceptions)
-
-from .base import TestSettingsBase
+from pickysettings.core.exceptions import *
 
 
-class TestFileWithExtension(TestSettingsBase):
+@pytest.mark.usefixtures('file_client')
+class TestFileWithExtension:
     """
     Abstract Test Class for Organization Purposes
     Purpose: Testing the initialization of LazySettings with files specified
@@ -21,54 +20,49 @@ class TestFileWithExtension(TestSettingsBase):
     base_path = 'app/settings'
     module_path = 'app/settings/dev.py'  # Path where File is Created with Content
 
-    def test_file_path(self, temp_module):
+    def test_file_path(self, tmp_module):
 
-        temp_module(self.module_path, content={
-            'TEST_VARIABLE_1': 1,
-            'TEST_VARIABLE_2': 5,
-        })
+        content = self.randomize_content(params=['TEST_VARIABLE_1', 'TEST_VARIABLE_2'])
+        tmp_module(self.module_path, content=content.as_string)
 
         settings = LazySettings(self.settings_path, base_dir=self.base_path)
 
-        assert settings.TEST_VARIABLE_1 == 1
-        assert settings.TEST_VARIABLE_2 == 5
+        assert settings.as_dict() == content.as_dict
 
     @need_to_do
     def test_command_file_path(self):
         pass
 
-    def test_env_file_path(self, temp_module):
+    def test_env_file_path(self, tmp_module):
 
-        temp_module(self.module_path, content={
-            'TEST_VARIABLE_1': 1,
-            'TEST_VARIABLE_2': 5,
-        })
+        content = self.randomize_content(params=['TEST_VARIABLE_1', 'TEST_VARIABLE_2'])
+        tmp_module(self.module_path, content=content.as_string)
 
         os.environ['TEST_FILE'] = self.settings_path
         settings = LazySettings(base_dir=self.base_path, env_keys='TEST_FILE')
 
-        assert settings.TEST_VARIABLE_1 == 1
-        assert settings.TEST_VARIABLE_2 == 5
+        assert settings.as_dict() == content.as_dict
 
-    def test_module_file_path(self, temp_module, module_string):
+    def test_module_file_path(self, tmp_module, module_string):
         """
         Specifying an extension on a module path (i.e. app.settings.dev.py) will
         cause the extension to be treated as the filename, raising an exception.
         """
-        temp_module(self.module_path, content={
-            'TEST_VARIABLE_1': 1,
-            'TEST_VARIABLE_2': 5,
-        })
+        content = self.randomize_content(params=['TEST_VARIABLE_1', 'TEST_VARIABLE_2'])
+        tmp_module(self.module_path, content=content.as_string)
 
         settings_path = module_string(self.base_path)
         settings_path += '.py'
 
         settings = LazySettings(settings_path, base_dir=self.base_path)
-        with pytest.raises(setting_exceptions.SettingFileDoesNotExist):
+        with pytest.raises(SettingsLoadError) as e:
             settings.TEST_VARIABLE_1
 
+        assert [e.exc.__class__ for e in e.value.errors] == [SettingFileDoesNotExist]
 
-class TestFileWithoutExtension(TestSettingsBase):
+
+@pytest.mark.usefixtures('file_client')
+class TestFileWithoutExtension:
     """
     Abstract Test Class for Organization Purposes
     Purpose: Testing the initialization of LazySettings with files specified
@@ -79,37 +73,39 @@ class TestFileWithoutExtension(TestSettingsBase):
     base_path = 'app/settings'
     module_path = 'app/settings/dev.py'  # Path where File is Created with Content
 
-    def test_file_path(self, temp_module):
+    def test_file_path(self, tmp_module):
 
-        temp_module(self.module_path, content={
-            'TEST_VARIABLE_1': 1,
-            'TEST_VARIABLE_2': 5,
-        })
+        content = self.randomize_content(params=['TEST_VARIABLE_1', 'TEST_VARIABLE_2'])
+        tmp_module(self.module_path, content=content.as_string)
 
         settings = LazySettings(self.settings_path, base_dir=self.base_path)
 
-        assert settings.TEST_VARIABLE_1 == 1
-        assert settings.TEST_VARIABLE_2 == 5
+        assert settings.as_dict() == content.as_dict
 
-    @need_to_do
-    def test_command_file_path(self):
-        pass
+    def test_command_file_path(self, tmp_module, tmpdir):
 
-    def test_env_file_path(self, temp_module):
+        sys.argv.append('--testargs=%s' % self.settings_path)
 
-        temp_module(self.module_path, content={
-            'TEST_VARIABLE_1': 1,
-            'TEST_VARIABLE_2': 5,
-        })
+        content = self.randomize_content(params=['TEST_VARIABLE_1', 'TEST_VARIABLE_2'])
+        tmp_module(self.module_path, content=content.as_string)
+
+        settings = LazySettings(command_line_args='--testargs',
+            base_dir=self.base_path)
+        assert settings.as_dict() == content.as_dict
+
+    def test_env_file_path(self, tmp_module):
+
+        content = self.randomize_content(params=['TEST_VARIABLE_1', 'TEST_VARIABLE_2'])
+        tmp_module(self.module_path, content=content.as_string)
 
         os.environ['TEST_FILE'] = self.settings_path
         settings = LazySettings(base_dir=self.base_path, env_keys='TEST_FILE')
 
-        assert settings.TEST_VARIABLE_1 == 1
-        assert settings.TEST_VARIABLE_2 == 5
+        assert settings.as_dict() == content.as_dict
 
 
-class TestRelativeToBase(TestSettingsBase):
+@pytest.mark.usefixtures('file_client')
+class TestRelativeToBase:
     """
     Abstract Test Class for Organization Purposes
     Purpose: Testing the initialization of LazySettings with files specified
@@ -126,64 +122,58 @@ class TestRelativeToBase(TestSettingsBase):
     base_path = 'app/settings'
     module_path = 'app/settings/dev.py'  # Path where File is Created with Content
 
-    def _settings_path(self, path, tests_module_path):
-        return tests_module_path.joinpath(path)
+    def test_file_path(self, tmp_module):
 
-    def test_file_path(self, temp_module):
-
-        temp_module(self.module_path, content={
-            'TEST_VARIABLE_1': 1,
-            'TEST_VARIABLE_2': 5,
-        })
+        content = self.randomize_content(params=['TEST_VARIABLE_1', 'TEST_VARIABLE_2'])
+        tmp_module(self.module_path, content=content.as_string)
 
         settings = LazySettings(self.settings_path, base_dir=self.base_path)
 
-        assert settings.TEST_VARIABLE_1 == 1
-        assert settings.TEST_VARIABLE_2 == 5
+        assert settings.as_dict() == content.as_dict
 
-    def test_env_file_path(self, temp_module):
+    def test_env_file_path(self, tmp_module):
 
-        temp_module(self.module_path, content={
-            'TEST_VARIABLE_1': 1,
-            'TEST_VARIABLE_2': 5,
-        })
+        content = self.randomize_content(params=['TEST_VARIABLE_1', 'TEST_VARIABLE_2'])
+        tmp_module(self.module_path, content=content.as_string)
 
         os.environ['TEST_FILE'] = self.settings_path
         settings = LazySettings(base_dir=self.base_path, env_keys='TEST_FILE')
 
-        assert settings.TEST_VARIABLE_1 == 1
-        assert settings.TEST_VARIABLE_2 == 5
+        assert settings.as_dict() == content.as_dict
 
-    @need_to_do
-    def test_command_file_path(self):
-        pass
+    def test_command_file_path(self, tmp_module, module_string):
 
-    # This Currently Caught a Bug!
-    def test_module_file_path(self, temp_module, module_string):
+        sys.argv.append('--testargs=%s' % self.settings_path)
 
-        temp_module(self.module_path, content={
-            'TEST_VARIABLE_1': 1,
-            'TEST_VARIABLE_2': 5,
-        })
+        content = self.randomize_content(params=['TEST_VARIABLE_1', 'TEST_VARIABLE_2'])
+        tmp_module(self.module_path, content=content.as_string)
+
+        settings = LazySettings(base_dir=self.base_path, command_line_args='--testargs')
+        assert settings.as_dict() == content.as_dict
+
+    def test_module_file_path(self, tmp_module, module_string):
+
+        content = self.randomize_content(params=['TEST_VARIABLE_1', 'TEST_VARIABLE_2'])
+        tmp_module(self.module_path, content=content.as_string)
 
         settings_path = module_string(self.settings_path)
         settings = LazySettings(settings_path, base_dir=self.base_path)
 
-        assert settings.TEST_VARIABLE_1 == 1
-        assert settings.TEST_VARIABLE_2 == 5
+        assert settings.as_dict() == content.as_dict
 
 
-class TestRelativeToAbsoluteBase(TestSettingsBase):
+@pytest.mark.usefixtures('file_client')
+class TestRelativeToAbsoluteBase:
     """
     Abstract Test Class for Organization Purposes
     Purpose: Testing the initialization of LazySettings with files specified
         as relative to the absolute form of the base path.
 
-    We should be able to specify the settings file specified by the ENV variable
-    as a filepath relative to the absolute form of the base_dir:
+    We should be able to specify the settings file as a filepath relative to
+    the absolute form of the base_dir:
 
-        BASE_DIR = 'tests/tmp_modules/app/settings'
-        ENV TEST_FILE = '/.../tests/tmp_modules/app/settings/dev.py'
+        BASE_DIR = 'app/settings'
+        ENV TEST_FILE = '/.../app/settings/dev.py'
 
     We do not need the `base_dir` parameter to be absolute.  In fact, we don't
     even need to specify it.
@@ -193,46 +183,48 @@ class TestRelativeToAbsoluteBase(TestSettingsBase):
     base_path = 'app/settings'
     module_path = 'app/settings/dev.py'  # Path where File is Created with Content
 
-    def _settings_path(self, path, tests_module_path):
-        return tests_module_path.absolute().joinpath(path)
+    def test_file_path(self, tmp_module, tmpdir):
 
-    def _base_path(self, path, tests_module_path):
-        return tests_module_path.joinpath(path)
+        content = self.randomize_content(params=['TEST_VARIABLE_1', 'TEST_VARIABLE_2'])
+        tmp_module(self.module_path, content=content.as_string)
 
-    def test_file_path(self, temp_module):
+        settings = LazySettings(self.settings_path,
+            base_dir=str(tmpdir.join(self.base_path)))
 
-        temp_module(self.module_path, content={
-            'TEST_VARIABLE_1': 1,
-            'TEST_VARIABLE_2': 5,
-        })
+        assert settings.as_dict() == content.as_dict
 
-        settings = LazySettings(self.settings_path, base_dir=self.base_path)
+    def test_env_file_path(self, tmp_module, tmpdir):
 
-        assert settings.TEST_VARIABLE_1 == 1
-        assert settings.TEST_VARIABLE_2 == 5
-
-    def test_env_file_path(self, temp_module):
-
-        temp_module(self.module_path, content={
-            'TEST_VARIABLE_1': 1,
-            'TEST_VARIABLE_2': 5,
-        })
+        content = self.randomize_content(params=['TEST_VARIABLE_1', 'TEST_VARIABLE_2'])
+        tmp_module(self.module_path, content=content.as_string)
 
         os.environ['TEST_FILE'] = self.settings_path
         settings = LazySettings(env_keys='TEST_FILE')
 
-        assert settings.TEST_VARIABLE_1 == 1
-        assert settings.TEST_VARIABLE_2 == 5
+        assert settings.as_dict() == content.as_dict
 
-        settings = LazySettings(base_dir=self.base_path, env_keys='TEST_FILE')
+        settings = LazySettings(env_keys='TEST_FILE',
+            base_dir=str(tmpdir.join(self.base_path)))
 
-        assert settings.TEST_VARIABLE_1 == 1
-        assert settings.TEST_VARIABLE_2 == 5
+        assert settings.as_dict() == content.as_dict
 
-    @need_to_do
-    def test_command_file_path(self):
-        pass
+    def test_command_file_path(self, tmp_module, tmpdir):
 
-    @need_to_do
-    def test_module_file_path(self):
-        pass
+        sys.argv.append('--testargs=%s' % self.module_path)
+
+        content = self.randomize_content(params=['TEST_VARIABLE_1', 'TEST_VARIABLE_2'])
+        tmp_module(self.module_path, content=content.as_string)
+
+        settings = LazySettings(command_line_args='--testargs',
+            base_dir=str(tmpdir.join(self.base_path)))
+        assert settings.as_dict() == content.as_dict
+
+    def test_module_file_path(self, tmp_module, tmpdir, module_string):
+
+        content = self.randomize_content(params=['TEST_VARIABLE_1', 'TEST_VARIABLE_2'])
+        tmp_module(self.module_path, content=content.as_string)
+
+        settings = LazySettings(module_string(self.settings_path),
+            base_dir=str(tmpdir.join(self.base_path)))
+
+        assert settings.as_dict() == content.as_dict

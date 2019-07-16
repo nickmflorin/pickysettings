@@ -3,7 +3,7 @@ import pytest
 import os
 
 from pickysettings.core.setting import Setting
-from pickysettings.core.exceptions import setting as setting_exceptions
+from pickysettings.core.exceptions import *
 
 
 class TestGetPath:
@@ -48,21 +48,21 @@ class TestGetPath:
         For module paths, the default extension is assumed to be .py.
         """
         setting = Setting('dev')
-        path = setting.get_path()
+        path = setting.file_path()
         assert str(path) == 'dev.py'
 
         setting = Setting('app.settings.dev')
-        path = setting.get_path()
+        path = setting.file_path()
         assert str(path) == 'app/settings/dev.py'
 
     def test_path(self):
         setting = Setting('app/settings/dev.py')
-        path = setting.get_path()
+        path = setting.file_path()
         assert str(path) == 'app/settings/dev.py'
 
     def test_absolute_path(self):
         setting = Setting('/app/settings/dev.py')
-        path = setting.get_path()
+        path = setting.file_path()
         assert str(path) == '/app/settings/dev.py'
 
     def test_without_extension(self):
@@ -83,53 +83,50 @@ class TestGetPath:
         if we include a path without a file.
         """
         setting = Setting('app/settings/filename')
-        with pytest.raises(setting_exceptions.SettingIsNotFilePath):
-            setting.get_path()
+        with pytest.raises(SettingFileIsNotFilePath):
+            setting.file_path()
 
         setting = Setting('dev')
-        path = setting.get_path()
+        path = setting.file_path()
         assert str(path) == 'dev.py'
 
-    def test_filename_with_extension(self, create_temp_dir, create_temp_file):
+    def test_filename_with_extension(self, tmp_module, tmpdir):
         """
         The file does not need to exist for .get_path(), but in some cases the
         directory does, since base_path will be checked.
         """
-        base_path = pathlib.PosixPath('app/settings')
-        setting = Setting('dev.py', base_path=base_path)
-        path = setting.get_path()
+        tmp_module('app/settings/dev.py')
 
+        setting = Setting('dev.py', base_dir=str(tmpdir.join('app/settings')))
+        path = setting.file_path()
         assert str(path) == 'dev.py'
 
         # Having the file there doesn't really make a difference because it
         # will always treat as a file with extension unless the module path exists.
-        create_temp_dir('app/settings')
-        create_temp_file('dev.py', directory='app/settings')
-
-        setting = Setting('dev.py', base_path=base_path)
-        path = setting.get_path()
+        setting = Setting('dev.py', base_dir=str(tmpdir.join('app/settings')))
+        path = setting.file_path()
         assert str(path) == 'dev.py'
 
     def test_invalid_setting(self):
 
         setting = Setting('filename.')
-        with pytest.raises(setting_exceptions.InvalidSetting):
-            setting.get_path()
+        with pytest.raises(SettingFileLoadError):
+            setting.file_path()
 
         # Folders cannot have "." in them, at least not right now.
         setting = Setting('app/settings.dev/dev.py')
-        with pytest.raises(setting_exceptions.InvalidSetting):
-            setting.get_path()
+        with pytest.raises(SettingFileLoadError):
+            setting.file_path()
 
         setting = Setting('/prod.dev.py')
-        with pytest.raises(setting_exceptions.InvalidSetting):
-            setting.get_path()
+        with pytest.raises(SettingFileLoadError):
+            setting.file_path()
 
         setting = Setting('.gitignore')
-        with pytest.raises(setting_exceptions.UnsupportedFileType):
-            setting.get_path()
+        with pytest.raises(UnsupportedFileType):
+            setting.file_path()
 
-    def test_treats_as_module_path(self, mock_cwd, create_temp_dir, create_temp_file):
+    def test_treats_as_module_path(self, tmp_module):
         """
         When the "2 Component Problem" is applicable, if the file associated
         with a module path exists, the setting should be treated as a module
@@ -137,36 +134,31 @@ class TestGetPath:
 
         If the file assocaited with the module path does not exist, the setting
         will be treated as a file, even if the file is invalid.  An exception
-        will be raised downstream, in the get_absolute_path() method.
+        will be raised downstream, in the absolute_file_path() method.
         """
-        mock_cwd()
+        tmp_module('app/settings/deploy/prod.py')
 
-        create_temp_dir('app/settings/deploy')
-        create_temp_file('prod.py', directory='app/settings/deploy')
-
-        base_path = pathlib.PosixPath('app/settings')
-
-        setting = Setting('deploy.prod', base_path=base_path)
-        path = setting.get_path()
+        setting = Setting('deploy.prod', base_dir='app/settings')
+        path = setting.file_path()
         assert str(path) == 'deploy/prod.py'
 
-        setting = Setting('deploy.debug', base_path=base_path)
-        path = setting.get_path()
+        setting = Setting('deploy.debug', base_dir='app/settings')
+        path = setting.file_path()
         assert str(path) == 'deploy.debug'
 
 
 class TestGetModulePath:
     """
     Abstract Test Class for Organization Purposes
-    Purpose: Testing the .get_module_path() method on the Setting object.
+    Purpose: Testing the .module_file_path() method on the Setting object.
 
     Testing for exceptions is redundant here because the first method that
-    .get_module_path() calls is the .get_absolute_path() method, which already
+    .module_file_path() calls is the .get_absolute_path() method, which already
     has exception tests in place.
     """
 
     def assertModulePath(self, setting, expected):
-        module_path = setting.get_module_path()
+        module_path = setting.module_file_path()
 
         error_message = (
             "\n"
@@ -176,7 +168,7 @@ class TestGetModulePath:
 
         assert module_path == expected, error_message
 
-    def test_folder_name_like_file(self, mock_cwd, create_temp_dir):
+    def test_folder_name_like_file(self, tmp_module):
         """
         If the Setting object is initialized with a file like string structure,
         (i.e,. dev or app/settings/dev.py) BUT the actual filesystem location
@@ -186,28 +178,28 @@ class TestGetModulePath:
         is called.
         """
 
-        mock_cwd()
-
         # Create a Directory with File Like Name
-        directory = create_temp_dir('app/settings/dev.py')
-        assert pathlib.PosixPath(str(directory)).is_dir()
+        directory = tmp_module('app/settings')
+        directory = directory.joinpath('dev.py')
+        directory.mkdir()
 
-        base_path = pathlib.PosixPath('app/settings')
-        setting = Setting('dev', base_path=base_path)
-        assert str(setting.get_path()) == 'dev.py'
+        assert directory.is_dir()
 
-        # Exception Should be Raised to Indicate Path Points to Non-File
-        with pytest.raises(setting_exceptions.SettingIsNotFilePath):
-            setting.get_module_path()
-
-        setting = Setting('app/settings/dev.py', base_path=None)
-        assert str(setting.get_path()) == 'app/settings/dev.py'
+        setting = Setting('dev', base_dir='app/settings')
+        assert str(setting.file_path()) == 'dev.py'
 
         # Exception Should be Raised to Indicate Path Points to Non-File
-        with pytest.raises(setting_exceptions.SettingIsNotFilePath):
-            setting.get_module_path()
+        with pytest.raises(SettingFileIsNotFilePath):
+            setting.module_file_path()
 
-    def test_without_extension(self, mock_cwd, create_temp_dir, create_temp_file):
+        setting = Setting('app/settings/dev.py')
+        assert str(setting.file_path()) == 'app/settings/dev.py'
+
+        # Exception Should be Raised to Indicate Path Points to Non-File
+        with pytest.raises(SettingFileIsNotFilePath):
+            setting.module_file_path()
+
+    def test_without_extension(self, tmp_module):
         """
         Part of "2-Component Problem"
 
@@ -221,80 +213,55 @@ class TestGetModulePath:
         If the Setting value is a file path without an extension, an
         exception should be raised.
         """
-        mock_cwd()
-
-        create_temp_dir('app/settings')
-        create_temp_file('dev.py', directory='app/settings')
+        tmp_module('app/settings/dev.py')
 
         # Test with Extensionless Filename - Treated as Module - Extension Assumed
-        base_path = pathlib.PosixPath('app/settings')
-        setting = Setting('dev', base_path=base_path)
-
+        setting = Setting('dev', base_dir='app/settings')
         self.assertModulePath(setting, 'app.settings.dev')
 
         # Test with Module - Extension Assumed
-        base_path = pathlib.PosixPath('app')
-        setting = Setting('settings.dev', base_path=base_path)
-
+        setting = Setting('settings.dev', base_dir='app')
         self.assertModulePath(setting, 'app.settings.dev')
 
-    def test_filename_with_extension(self, mock_cwd, create_temp_dir, create_temp_file):
+    def test_filename_with_extension(self, tmp_module):
 
-        mock_cwd()
-
-        create_temp_dir('app/settings')
-        create_temp_file('dev.py', directory='app/settings')
-
-        base_path = pathlib.PosixPath('app/settings')
-        setting = Setting('dev', base_path=base_path)
-
+        tmp_module('app/settings/dev.py')
+        setting = Setting('dev', base_dir='app/settings')
         self.assertModulePath(setting, 'app.settings.dev')
 
-    def test_path_appended_to_base_dir(self, mock_cwd, create_temp_dir, create_temp_file):
+    def test_path_appended_to_base_dir(self, tmp_module):
         """
         Setting path should be joined to base directory if there is no
         overlap between the Setting path and base directory.
         """
-        mock_cwd()
-
-        create_temp_dir('app/settings')
-        create_temp_file('dev.py', directory='app/settings')
-
-        base_path = pathlib.PosixPath('app')
+        tmp_module('app/settings/dev.py')
 
         # Test with Path
-        setting = Setting('settings/dev.py', base_path=base_path)
+        setting = Setting('settings/dev.py', base_dir='app')
         self.assertModulePath(setting, 'app.settings.dev')
 
         # Test with Module
-        setting = Setting('settings.dev', base_path=base_path)
+        setting = Setting('settings.dev', base_dir='app')
         self.assertModulePath(setting, 'app.settings.dev')
 
-    def test_path_relative_to_base_dir(self, mock_cwd, create_temp_dir, create_temp_file):
+    def test_path_relative_to_base_dir(self, tmp_module):
         """
         Setting value can be relative to the base directory.
         """
-        mock_cwd()
-
-        create_temp_dir('app/settings/development')
-        create_temp_file('dev.py', directory='app/settings/development')
+        tmp_module('app/settings/development/dev.py')
 
         # Test with Path
-        base_path = pathlib.PosixPath('app/settings/development')
-        setting = Setting('app/settings/development/dev.py', base_path=base_path)
+        setting = Setting('app/settings/development/dev.py', base_dir='app/settings/development')
         self.assertModulePath(setting, 'app.settings.development.dev')
 
-        base_path = pathlib.PosixPath('app/settings')
-        setting = Setting('app/settings/development/dev.py', base_path=base_path)
+        setting = Setting('app/settings/development/dev.py', base_dir='app/settings')
         self.assertModulePath(setting, 'app.settings.development.dev')
 
         # Test with Module
-        base_path = pathlib.PosixPath('app/settings/development')
-        setting = Setting('app.settings.development.dev', base_path=base_path)
+        setting = Setting('app.settings.development.dev', base_dir='app/settings/development')
         self.assertModulePath(setting, 'app.settings.development.dev')
 
-        base_path = pathlib.PosixPath('app/settings')
-        setting = Setting('app.settings.development.dev', base_path=base_path)
+        setting = Setting('app.settings.development.dev', base_dir='app/settings')
         self.assertModulePath(setting, 'app.settings.development.dev')
 
 
@@ -303,7 +270,7 @@ def assertAbsPath(tmpdir):
 
     def assertPath(setting, path):
 
-        absolute_path = setting.get_absolute_path()
+        absolute_path = setting.absolute_file_path()
         expected = os.path.join(str(tmpdir), path)
 
         expected_rel_path = pathlib.Path(expected).relative_to(tmpdir)
@@ -322,10 +289,10 @@ def assertAbsPath(tmpdir):
 class TestGetAbsolutePath:
     """
     Abstract Test Class for Organization Purposes
-    Purpose: Testing the .get_absolute_path() method on the Setting object.
+    Purpose: Testing the .absolute_file_path() method on the Setting object.
     """
 
-    def test_module_caveats(self, mock_cwd, create_temp_dir, create_temp_file, assertAbsPath):
+    def test_module_caveats(self, tmp_module, assertAbsPath):
         """
         Tests certain weird/unpreventable behavior due to the trouble deciphering
         a filename with extension vs. a two-component module string.
@@ -341,88 +308,68 @@ class TestGetAbsolutePath:
             (2) `settings.dev.ini` will be treated as a module string and raise
                 an exception that "dev" directory does not exist.
         """
-        mock_cwd()
-
-        create_temp_dir('app/settings')
-        create_temp_file('dev.py', directory='app/settings')
-
-        base_path = pathlib.PosixPath('app')
+        tmp_module('app/settings/dev.py')
 
         # Caveat 1
-        setting = Setting('develop.dev', base_path=base_path)
-        with pytest.raises(setting_exceptions.UnsupportedFileType):
-            setting.get_absolute_path()
+        setting = Setting('develop.dev', base_dir='app')
+        with pytest.raises(UnsupportedFileType):
+            setting.absolute_file_path()
 
         # Caveat 2 (Not really a caveat, this is kind of expected).
-        setting = Setting('settings.dev.ini', base_path=base_path)
-        with pytest.raises(setting_exceptions.SettingDirDoesNotExist):
-            setting.get_absolute_path()
+        setting = Setting('settings.dev.ini', base_dir='app')
+        with pytest.raises(SettingFileDirDoesNotExist):
+            setting.absolute_file_path()
 
-    def test_module_treated_as_path(self, mock_cwd, create_temp_dir, create_temp_file, assertAbsPath):
+    def test_module_treated_as_path(self, tmp_module, assertAbsPath):
         """
         When dealing with the "2 Component Problem", if the setting is specified
         as a module string but the module cannot be found, it will be treated
         as a file with the given extension.
         """
-        mock_cwd()
+        tmp_module('app/settings/develop/dev.py')
+        setting = Setting('develop.develop_settings', base_dir='app/settings')
 
-        create_temp_dir('app/settings/develop')
-        create_temp_file('dev.py', directory='app/settings/develop')
+        with pytest.raises(UnknownFileType):
+            setting.absolute_file_path()
 
-        base_path = pathlib.PosixPath('app/settings')
-        setting = Setting('develop.develop_settings', base_path=base_path)
-
-        with pytest.raises(setting_exceptions.UnknownFileType):
-            setting.get_absolute_path()
-
-    def test_file_does_not_exist(self, mock_cwd, create_temp_dir, create_temp_file, assertAbsPath):
+    def test_file_does_not_exist(self, tmp_module, assertAbsPath):
         """
         The existence of the directory containing the file pointed to by the
         setting is checked before the existence of the file, so if the directory
         exists, non-existent files should raise SettingsFileDoesNotExist.
         """
-        mock_cwd()
+        tmp_module('app/settings/dev.py')
 
-        create_temp_dir('app/settings')
-        create_temp_file('dev.py', directory='app/settings')
-
-        base_path = pathlib.PosixPath('app/settings')
-
-        # Test with Path
-        setting = Setting('prod.py', base_path=base_path)
-        with pytest.raises(setting_exceptions.SettingFileDoesNotExist):
-            setting.get_absolute_path()
+        # # Test with Path
+        # setting = Setting('prod.py', base_dir='app/settings')
+        # with pytest.raises(SettingFileDoesNotExist):
+        #     setting.absolute_file_path()
 
         # Test with Module
-        setting = Setting('prod', base_path=base_path)
-        with pytest.raises(setting_exceptions.SettingFileDoesNotExist):
-            setting.get_absolute_path()
+        setting = Setting('prod', base_dir='app/settings')
+        with pytest.raises(SettingFileDoesNotExist):
+            setting.absolute_file_path()
 
-    def test_directory_does_not_exist(self, mock_cwd, create_temp_dir, create_temp_file, assertAbsPath):
+    def test_directory_does_not_exist(self, tmp_module, assertAbsPath):
         """
         The existence of the directory containing the file pointed to by the
         setting is checked before the existence of the file, so if the directory
         does not exist, non-existent files/directories should raise
-        SettingDirDoesNotExist.
+        SettingFileDirDoesNotExist.
         """
-        mock_cwd()
-
-        create_temp_dir('app/settings')
-        create_temp_file('dev.py', directory='app/settings')
-
-        base_path = pathlib.PosixPath('app')
+        tmp_module('app/settings/dev.py')
 
         # Test with Path
-        setting = Setting('develop/dev.py', base_path=base_path)
-        with pytest.raises(setting_exceptions.SettingDirDoesNotExist):
-            setting.get_absolute_path()
+        setting = Setting('develop/dev.py', base_dir='app')
+        with pytest.raises(SettingFileDirDoesNotExist):
+            setting.absolute_file_path()
 
         # Test with Module
-        setting = Setting('settings.develop.dev', base_path=base_path)
-        with pytest.raises(setting_exceptions.SettingDirDoesNotExist):
-            setting.get_absolute_path()
+        setting = Setting('settings.develop.dev', base_dir='app')
+        with pytest.raises(SettingFileDirDoesNotExist):
+            setting.absolute_file_path()
 
-    def test_file_without_extension(self, mock_cwd, create_temp_dir, create_temp_file, assertAbsPath):
+    def test_file_without_extension(self, tmp_module, assertAbsPath):
         """
         If the Setting value is just the name of the file without an
         extension, it is treated as a 1-component module path and the extension
@@ -434,144 +381,124 @@ class TestGetAbsolutePath:
         If the Setting value is a file path without an extension, an
         exception should be raised.
         """
-        mock_cwd()
-
-        create_temp_dir('app/settings')
-        create_temp_file('dev.py', directory='app/settings')
+        tmp_module('app/settings/dev.py')
 
         # Test with Extensionless Filename - Extension Assumed
-        base_path = pathlib.PosixPath('app/settings')
-        setting = Setting('dev', base_path=base_path)
-
+        setting = Setting('dev', base_dir='app/settings')
         assertAbsPath(setting, 'app/settings/dev.py')
 
         # Test with Module - Extension Assumed
-        base_path = pathlib.PosixPath('app')
-
-        setting = Setting('settings.dev', base_path=base_path)
+        setting = Setting('settings.dev', base_dir='app')
         assertAbsPath(setting, 'app/settings/dev.py')
 
         # Test with Path - Extension Required, Otherwise thinks it's a directory.
-        setting = Setting('settings/dev', base_path=base_path)
-        with pytest.raises(setting_exceptions.SettingIsNotFilePath):
-            setting.get_absolute_path()
+        setting = Setting('settings/dev', base_dir='app')
+        with pytest.raises(SettingFileIsNotFilePath):
+            setting.absolute_file_path()
 
-    def test_file_with_extension(self, mock_cwd, create_temp_dir, create_temp_file, assertAbsPath):
+    def test_file_with_extension(self, tmp_module, assertAbsPath):
 
-        mock_cwd()
+        tmp_module('app/settings/dev.py')
 
-        create_temp_dir('app/settings')
-        create_temp_file('dev.py', directory='app/settings')
-
-        base_path = pathlib.PosixPath('app/settings')
-        setting = Setting('dev.py', base_path=base_path)
-
+        setting = Setting('dev.py', base_dir='app/settings')
         assertAbsPath(setting, 'app/settings/dev.py')
 
-    def test_unsupported_filetype(self, mock_cwd, create_temp_dir, create_temp_file, assertAbsPath):
+    def test_unsupported_filetype(self, tmp_module, assertAbsPath):
 
-        mock_cwd()
+        tmp_module('app/settings/dev.ini')
 
-        create_temp_dir('app/settings')
-        create_temp_file('dev.ini', directory='app/settings')
+        setting = Setting('dev.ini', base_dir='app/settings')
+        with pytest.raises(UnsupportedFileType):
+            setting.absolute_file_path()
 
-        base_path = pathlib.PosixPath('app/settings')
-        setting = Setting('dev.ini', base_path=base_path)
-
-        with pytest.raises(setting_exceptions.UnsupportedFileType):
-            setting.get_absolute_path()
-
-        base_path = pathlib.PosixPath('app')
-        setting = Setting('settings/dev.ini', base_path=base_path)
-
-        with pytest.raises(setting_exceptions.UnsupportedFileType):
-            setting.get_absolute_path()
+        setting = Setting('settings/dev.ini', base_dir='app')
+        with pytest.raises(UnsupportedFileType):
+            setting.absolute_file_path()
 
         # Exception should be raised even if the file with the given extension
         # exists.
-        create_temp_dir('app/settings/develop')
-        create_temp_file('dev.abc', directory='app/settings/develop')
+        tmp_module('app/settings/dev.abc')
 
-        base_path = pathlib.PosixPath('app/settings')
-        setting = Setting('develop.abc', base_path=base_path)
+        setting = Setting('develop.abc', base_dir='app/settings')
+        with pytest.raises(UnsupportedFileType):
+            setting.absolute_file_path()
 
-        with pytest.raises(setting_exceptions.UnsupportedFileType):
-            setting.get_absolute_path()
+    def test_unknown_filetype(self, tmp_module, assertAbsPath):
+        tmp_module('app/settings/development/dev.uac')
 
-    def test_unknown_filetype(self, mock_cwd, create_temp_dir, create_temp_file, assertAbsPath):
-        mock_cwd()
+        setting = Setting('settings/dev.uac', base_dir='app')
+        with pytest.raises(UnknownFileType):
+            setting.absolute_file_path()
 
-        create_temp_dir('app/settings')
-        create_temp_file('dev.uac', directory='app/settings')
+        setting = Setting('dev.uac', base_dir='app/settings')
+        with pytest.raises(UnknownFileType):
+            setting.absolute_file_path()
 
-        base_path = pathlib.PosixPath('app')
-        setting = Setting('settings/dev.uac', base_path=base_path)
-
-        with pytest.raises(setting_exceptions.UnknownFileType):
-            setting.get_absolute_path()
-
-        base_path = pathlib.PosixPath('app/settings')
-        setting = Setting('dev.uac', base_path=base_path)
-
-        with pytest.raises(setting_exceptions.UnknownFileType):
-            setting.get_absolute_path()
-
-    def test_path_appended_to_base_dir(self, mock_cwd, create_temp_dir, create_temp_file, assertAbsPath):
+    def test_path_relativity(self, tmp_module, assertAbsPath):
         """
-        Setting path should be joined to base directory if there is no
-        overlap between the Setting path and base directory.
+        Tests various situations in which both the absolute forms and non-absolute
+        forms of the base path and file path are specified and whether or not
+        the Setting instance can correctly determine the file path based on the
+        relativity of the different path forms to one another.
+
+        [x] TODO:
+        --------
+        Split these tests apart.
         """
-        mock_cwd()
+        file_path = 'app/settings/development/dev.py'
+        base_path = 'app/settings'
 
-        create_temp_dir('app/settings')
-        create_temp_file('dev.py', directory='app/settings')
+        tmp_module(file_path)
 
-        base_path = pathlib.PosixPath('app')
+        absolute_file_path = pathlib.PosixPath(file_path).absolute()
+        absolute_base_path = pathlib.PosixPath(base_path).absolute()
+
+        # Path Not Absolute
+        # Base Path Not Absolute
+        # Path Relative to Base Path
+        setting = Setting(file_path, base_path)
+        assertAbsPath(setting, 'app/settings/development/dev.py')
+
+        # Path Absolute
+        # Base Path Absolute
+        # Absolute Path Relative to Absolute Base Path
+        setting = Setting(absolute_file_path, absolute_base_path)
+        assertAbsPath(setting, file_path)
+
+        # Path Not Absolute
+        # Base Path Absolute
+        # Absolute Form of Path Relative to Absolute Base Path
+        setting = Setting(file_path, absolute_base_path)
+        assertAbsPath(setting, 'app/settings/development/dev.py')
+
+        # Path Absolute
+        # Base Path Not Absolute
+        # Path Relative to Absolute Form of Base Path
+        setting = Setting(absolute_file_path, base_path)
+        assertAbsPath(setting, 'app/settings/development/dev.py')
+
+        # If path is not absolute and not relative to either the base path or
+        # the absolute base path, it should be joined with the base path.
+        setting = Setting('development/dev.py', base_path)
+        assertAbsPath(setting, 'app/settings/development/dev.py')
+
+        setting = Setting('development/dev.py', absolute_base_path)
+        assertAbsPath(setting, 'app/settings/development/dev.py')
+
+        # If the path is not relative to the absolute base path or the base
+        # path, overlapping paths will not be recognized and will raise
+        # SettingFileDirDoesNotExist.
+        setting = Setting('development/dev.py', 'app/settings/development')
+        with pytest.raises(SettingFileDirDoesNotExist):
+            setting.absolute_file_path()
 
         # Test with Path
-        setting = Setting('settings/dev.py', base_path=base_path)
-        assertAbsPath(setting, 'app/settings/dev.py')
+        setting = Setting('settings/development/dev.py', base_dir='app')
+        assertAbsPath(setting, 'app/settings/development/dev.py')
 
         # Test with Module
-        setting = Setting('settings.dev', base_path=base_path)
-        assertAbsPath(setting, 'app/settings/dev.py')
+        setting = Setting('settings.development.dev', base_dir='app')
+        assertAbsPath(setting, 'app/settings/development/dev.py')
 
-    def test_path_overlaps_base_dir(self, mock_cwd, create_temp_dir, create_temp_file, assertAbsPath):
-        """
-        If the setting value overlaps the base directory but the two paths
-        are not relative, which would mean being the same path, InvalidSetting
-        should be raised.
-
-        If there is overlap, we cannot safely concatenate the setting path to
-        the base path.
-        """
-        mock_cwd()
-
-        create_temp_dir('app/settings/development')
-        create_temp_file('dev.py', directory='app/settings/development')
-
-        base_path = pathlib.PosixPath('app/settings')
-
-        # Test with Path
-        setting = Setting('settings/development/dev.py', base_path=base_path)
-        with pytest.raises(setting_exceptions.InvalidSetting):
-            setting.get_absolute_path()
-
-        # Test with Module
-        setting = Setting('settings.development.dev', base_path=base_path)
-        with pytest.raises(setting_exceptions.InvalidSetting):
-            setting.get_absolute_path()
-
-    def test_path_relative_to_abs_base_dir(self, mock_cwd, create_temp_dir, create_temp_file, assertAbsPath):
-        """
-        Setting value can be relative to the absolute base directory.
-        """
-        mock_cwd()
-
-        create_temp_dir('app/settings/development')
-        create_temp_file('dev.py', directory='app/settings/development')
-
-        # Test with Path
-        setting = Setting(os.path.join(os.getcwd(), 'app/settings/development/dev.py'),
-            base_dir=os.path.join(os.getcwd(), 'app/settings/development'))
+        setting = Setting('development.dev', base_dir='app/settings')
         assertAbsPath(setting, 'app/settings/development/dev.py')

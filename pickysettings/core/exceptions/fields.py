@@ -2,7 +2,7 @@ import re
 
 from termx.ext.utils import ConditionalString, humanize_list
 
-from .base import pickysettingsError
+from .base import PickySettingsError
 
 
 class FieldErrorMeta(type):
@@ -42,7 +42,7 @@ class FieldCodes(object):
         return getattr(cls, val)
 
 
-class FieldError(pickysettingsError):
+class FieldError(PickySettingsError):
 
     TYPE_LOOKUP = {
         list: 'list',

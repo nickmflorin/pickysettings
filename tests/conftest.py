@@ -1,26 +1,16 @@
+import contextlib
 import os
 import pathlib
 import pytest
+import sys
 
-from pickysettings import LazySettings
-from .utils import (
-    instantiate_test_module, get_tests_module_path, starts_with_test_module,
-    remove_test_modules, get_module_string)
-
-
-@pytest.fixture
-def tests_module_path():
-    return get_tests_module_path()
-
-
-@pytest.fixture
-def tests_absolute_module_path():
-    return get_tests_module_path(absolute=True)
+from pickysettings.core.exceptions import SettingsLoadError
+from .helpers import FileContent, module, no_absolute_path
 
 
 @pytest.fixture
 def module_string():
-    return get_module_string
+    return module._get_module_string
 
 
 @pytest.fixture
@@ -32,145 +22,75 @@ def mock_cwd(monkeypatch, tmpdir):
     return create_mock
 
 
-@pytest.fixture(scope="function")
-def create_temp_dir(tmpdir):
-    def create_dir(*args):
-        path = args[-1]
+@pytest.fixture
+def raises_load_error():
 
-        parts = pathlib.Path(path).parts
-        parts = [pt for pt in parts if pt != '/']
-
-        tmp = tmpdir
-        for pt in parts:
-            tmp = tmp.join(pt)
-            if tmp.exists():
-                continue
-            tmp.mkdir()
-        return tmp
-    return create_dir
+    @contextlib.contextmanager
+    def _raises_load_error(err):
+        try:
+            with pytest.raises(SettingsLoadError) as exc:
+                yield exc
+        finally:
+            assert [e.exc.__class__ for e in exc.value.errors] == [err]
+    return _raises_load_error
 
 
-@pytest.fixture(scope="function")
-def create_temp_file(tmpdir):
-    def create_file(*args, directory=None, content=None):
-        file = args[-1]
+@pytest.fixture(scope='class')
+def file_client(request):
+    """
+    [x] TODO:
+    --------
+    Get to work for non test class cases, if at all applicable.
+    """
 
-        path = tmpdir
-        if directory:
-            path = tmpdir.join(pathlib.PosixPath(directory))
-            if not path.exists():
-                raise RuntimeError(
-                    "Cannot create test file in directory until temp directory "
-                    "created."
-                )
+    def _generate_random_content(cls, *args, **kwargs):
+        num_params = kwargs.pop('num_params', 2)
+        file_content = FileContent(*args, **kwargs)
+        file_content.randomize(test_cls=request.cls, num_params=num_params)
+        return file_content
 
-        p = path / file
-        if content:
-            p.write(content)
-        else:
-            p.write('empty')
-        return p
+    request.cls.file_count = 0
 
-    return create_file
+    request.cls.file_content = FileContent
+    request.cls.randomize_content = _generate_random_content
+
+    yield
+
+    request.cls.file_count = 0
 
 
 @pytest.fixture
-def temp_module(tests_module_path):
+def tmp_module(tmpdir, mock_cwd):
     """
-    Creates a temporary module at the given relative path inside of
-    'tests/tmp_modules'.
+    Factory for creating a temporary module at the given path.  If the path
+    references a file, the file will also be created inside the module.
 
-    For instance, temp_module('app/settings/dev.py') will create the following
-    structure:
-
-    -- tests
-    -- __init__.py
-    ---- tmp_modules
-    ---- __init__.py
-    ------ app
-    -------- __init__.py
-    -------- settings
-    ---------- __init__.py
-    ---------- dev.py
-
-    The fixture is in the test function scope.  When the function completes,
-    all of the created test modules will be removed.
-
-    [!] IMPORTANT
+    [!] IMPORTANT:
     -------------
-    Current Working Directory Cannot be Mocked
+    We must always ensure that `tmpdir` is in the `sys.path` so that
+    we can directly import modules nested inside of the non-module tmpdir
+    structure.
 
-    [!] IMPORTANT
-    -------------
-    Reloading Modules
-
-    If we update the content of a settings file after initially creating it in
-    the same test, it will not be reloaded correctly and the new values will
-    not update.
-
-        >>> temp_module('app/settings/dev.py', content={'VALUE': 1})
-        >>> settings = test_settings('dev', base_dir='app/settings')
-        >>> settings.VALUE
-        >>> 1
-
-        >>> temp_module('app/settings/dev.py', content={'VALUE': 2})
-        >>> settings = test_settings('dev', base_dir='app/settings')
-        >>> settings.VALUE
-        >>> 1
-
-    If we want to run additional logic with altered content in the same test,
-    we have to create another temporary module file:
-
-        >>> temp_module('app/settings/dev2.py', content={'VALUE': 2})
+    We must also always ensure that we mock os.getcwd() to point to tmpdir so
+    that all instances of LazySettings look in tmpdir for the absolute paths.
     """
+    mock_cwd()
+    sys.path.insert(0, str(tmpdir))
+
+    @no_absolute_path
     def _create_temp_module(path, content=None, invalid=False):
-        """
-        Creates a temporary module at the given path.  If the path references
-        a file, and `content` is specified, will write the content to the file.
 
-        If the path references a file and content is specified, and `invalid`
-        is True, we are expecting that the module file will be invalid which
-        will result in an error during import, which we want to be raised in
-        the code we are testing, instead of the test code importing the module.
-        """
-        if not isinstance(path, pathlib.Path):
-            path = pathlib.PosixPath(path)
+        tmp_path = pathlib.PosixPath(tmpdir)
+        try:
+            path = path.relative_to(tmp_path)
+        except ValueError:
+            pass
 
-        if path.is_absolute():
-            raise ValueError('Path cannot be absolute.')
+        sys.path.insert(0, str(tmpdir))
+        mod = module(tmpdir, path, content=content, invalid=invalid)
 
-        # Path Cannot Start with "/tests/tmp_modules"
-        if starts_with_test_module(path):
-            raise ValueError('Path %s cannot start with %s.' % (tests_module_path, path))
+        created = mod.create()
+        mod.reload()
+        return created
 
-        if path.suffix:
-            if path.suffix != '.py':
-                raise ValueError('Path must point to valid Python file.')
-
-        module_path = instantiate_test_module(path, content=content, invalid=invalid)
-        return module_path
-
-    yield _create_temp_module
-    remove_test_modules()
-
-
-@pytest.fixture(scope="function")
-def test_settings(tests_module_path):
-    """
-    Creates an instance of LazySettings with the base directory adjusted for
-    the temporary settings module.
-    """
-    def _test_settings(*args, base_dir=None, **kwargs):
-        settings = list(args) or []
-        if settings:
-            if hasattr(args[0], '__name__'):
-                settings = list(args)[1:]
-
-        base = tests_module_path
-        if base_dir:
-            base = base.joinpath(base_dir)
-
-        obj = LazySettings(*settings, base_dir=base, **kwargs)
-        return obj
-
-    return _test_settings
+    return _create_temp_module

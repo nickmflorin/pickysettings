@@ -1,9 +1,8 @@
-import pathlib
-
+from pickysettings.core.setting import Setting
 from pickysettings.core.fields import ConstantField
 
 
-def test_converts_constants_to_fields(temp_module, test_setting):
+def test_converts_constants_to_fields(tmp_module):
 
     content = """
     import pathlib
@@ -12,10 +11,9 @@ def test_converts_constants_to_fields(temp_module, test_setting):
     TEST_VARIABLE_2 = 30
     """
 
-    temp_module('app/settings/dev.py', content=content)
+    tmp_module('app/settings/dev.py', content=content)
 
-    base_path = pathlib.PosixPath('app/settings')
-    setting = test_setting('dev', base_path=base_path)
+    setting = Setting('dev', base_dir='app/settings')
     setting.load()
 
     assert setting.fields.TEST_VARIABLE_1 == ConstantField(1)
